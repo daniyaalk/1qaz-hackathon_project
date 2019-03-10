@@ -1,18 +1,11 @@
-import boto3, os, json, sys, math, cv2
+import boto3, os, json, sys, math, cv2, pprint
 from pathlib import Path
 
 client = boto3.client('rekognition')
 
-print("Choose Task: ")
-print("1. Add to collection")
-print("2. Search by image")
+FILE_NAME = "/tmp/rekogwebcam.png"
 
-choice = input("Enter task: ")
-
-input_option = 1
-
-if input_option == 1:
-    FILE_NAME = "/tmp/rekogwebcam.png"
+def get_image():
 
     camera = cv2.VideoCapture(0)
 
@@ -23,75 +16,111 @@ if input_option == 1:
         temp = camera.read()
 
     print ("Processing...")
-    cv2.imwrite("/tmp/rekogwebcam.png", camera.read()[1])
+    cv2.imwrite(FILE_NAME, camera.read()[1])
     del(camera)
     print ("Picture Taken")
+    with open(FILE_NAME, "rb") as imageFile:
+        f = imageFile.read()
+    os.remove(FILE_NAME)
+    return f
 
-elif input_option == 2:
-    FILE_NAME = raw_input("Enter file name: ")
+def remove_user():
 
-else:
-    exit()
-
-# check if file exists
-if not Path(FILE_NAME).is_file():
-    print("Could not find file.")
-    exit()
-
-## check file size
-if os.path.getsize(FILE_NAME) > 5242880:
-    print("File too large.")
-    exit()
-
-with open(FILE_NAME, "rb") as imageFile:
-  f = imageFile.read()
-  b = bytearray(f)
-
-if choice == 1:
-    response = client.search_faces_by_image(
-        CollectionId='faces',
-        Image={
-            'Bytes': f
-        }
+    response = client.list_faces(
+        CollectionId='faces'
     )
 
-    matchedFaces = response["FaceMatches"]
+    i = 1
+    for face in response["Faces"]:
+        print(str(i)+". "+face["ExternalImageId"][1:])
+        i+=1
 
-    if(len(matchedFaces) != 0):
-        print("That face already exists!")
-        exit()
+    while True:
+        delete_face = int(raw_input("Which user do you wish to delete? "))
+
+        if delete_face < i and delete_face > 0:
+            break
+        else:
+            continue
+
+    delete_face -= 1
+    delete_face_id = response["Faces"][delete_face]["FaceId"]
+    response = client.delete_faces(
+        CollectionId='faces',
+        FaceIds=[
+            delete_face_id
+        ]
+    )
+    if(response["ResponseMetadata"]["HTTPStatusCode"] == 200):
+        print("Successfully deleted the user.")
+    else:
+        print("Something went wrong, please try again later.")
+    exit()
+
+f = get_image()
+
+def add_user():
+    f = get_image()
 
     name = str(raw_input("Enter name of subject: "))
+
+    while True:
+        authority = str(raw_input("Is the user an admin? (Y/n): "))
+
+        if authority != 'Y' and authority != 'N':
+            continue
+        else:
+            break
+
     response = client.index_faces(
         CollectionId='faces',
         Image={
             'Bytes': f
         },
-        ExternalImageId=name
+        ExternalImageId=authority+name,
+        MaxFaces=1
     )
     if(response["ResponseMetadata"]["HTTPStatusCode"] == 200):
         print("Successfully added to database.")
     else:
         print("Something went wrong, please try again later.")
 
-elif choice == 2:
-    response = client.search_faces_by_image(
-        CollectionId='faces',
-        Image={
-            'Bytes': f
-        }
-    )
+response = client.search_faces_by_image(
+    CollectionId='faces',
+    Image={
+        'Bytes': f
+    }
+)
 
-    matchedFaces = response["FaceMatches"]
+matchedFaces = response["FaceMatches"]
 
-    if(len(matchedFaces) == 0):
-        print("No match found.")
-        exit()
+if(len(matchedFaces) == 0):
+    print("No match found.")
+    exit()
 
-    elif len(matchedFaces) >= 1:
+elif len(matchedFaces) >= 1:
 
-        matchedFaces.sort(key=lambda match: match["Face"]["Confidence"], reverse=True)
-        print("Matched with: " + matchedFaces[0]["Face"]["ExternalImageId"] + " with " + str(math.floor(matchedFaces[0]["Face"]["Confidence"])) + "% confidence.")
+    matchedFaces.sort(key=lambda match: match["Face"]["Confidence"], reverse=True)
+    print("Matched with: " + matchedFaces[0]["Face"]["ExternalImageId"][1:] + " with " + str(math.floor(matchedFaces[0]["Face"]["Confidence"])) + "% confidence.")
+    if(matchedFaces[0]["Face"]["ExternalImageId"][0] == "Y"):
+        while True:
+
+            print("You are an admin, what do you wish to do?")
+            print("1. Add new User")
+            print("2. Remove User")
+            print("3. Exit")
+
+            choice = str(raw_input())
+
+            if choice == "1":
+                add_user()
+            elif choice == "2":
+                remove_user()
+            elif choice == "3":
+                exit()
+            else:
+                continue
+
 
 if('-v' in sys.argv):
     print json.dumps(response, indent=4, sort_keys=True)
